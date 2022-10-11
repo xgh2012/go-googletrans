@@ -29,6 +29,11 @@ type translated struct {
 
 type sentences struct {
 	Sentences []sentence `json:"sentences"`
+	LdResult  struct {
+		Srclangs            []string  `json:"srclangs"`
+		SrclangsConfidences []float64 `json:"srclangs_confidences"`
+		ExtendedSrclangs    []string  `json:"extended_srclangs"`
+	} `json:"ld_result"`
 }
 
 type sentence struct {
@@ -109,20 +114,20 @@ func New(config ...Config) *translator {
 
 // Translate given content.
 // Set src to `auto` and system will attempt to identify the source language automatically.
-func (a *translator) Translate(origin, src, dest string) (*translated, error) {
+func (a *translator) Translate(origin, src, dest string) (*translated, string, error) {
 	// check src & dest
 	src = strings.ToLower(src)
 	dest = strings.ToLower(dest)
 	if _, ok := languages[src]; !ok {
-		return nil, fmt.Errorf("src language code error")
+		return nil, "", fmt.Errorf("src language code error")
 	}
 	if val, ok := languages[dest]; !ok || val == "auto" {
-		return nil, fmt.Errorf("dest language code error")
+		return nil, "", fmt.Errorf("dest language code error")
 	}
 
-	text, err := a.translate(origin, src, dest)
+	text, srcLangBack, err := a.translate(origin, src, dest)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	result := &translated{
 		Src:    src,
@@ -130,13 +135,13 @@ func (a *translator) Translate(origin, src, dest string) (*translated, error) {
 		Origin: origin,
 		Text:   text,
 	}
-	return result, nil
+	return result, srcLangBack, nil
 }
 
-func (a *translator) translate(origin, src, dest string) (string, error) {
+func (a *translator) translate(origin, src, dest string) (string, string, error) {
 	tk, err := a.ta.do(origin)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// build request
@@ -145,7 +150,7 @@ func (a *translator) translate(origin, src, dest string) (string, error) {
 	tranUrl := fmt.Sprintf("https://%s/translate_a/single", a.host)
 	req, err := http.NewRequest("GET", tranUrl, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	q := req.URL.Query()
 	// params from chrome translate extension
@@ -162,18 +167,18 @@ func (a *translator) translate(origin, src, dest string) (string, error) {
 	// do request
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 200 {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		var sentences sentences
 		err = json.Unmarshal(body, &sentences)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 
 		translated := ""
@@ -181,9 +186,9 @@ func (a *translator) translate(origin, src, dest string) (string, error) {
 		for _, s := range sentences.Sentences {
 			translated += s.Trans
 		}
-		return translated, nil
+		return translated, sentences.LdResult.ExtendedSrclangs[0], nil
 	} else {
-		return "", fmt.Errorf("request error")
+		return "", "", fmt.Errorf("request error")
 	}
 }
 
